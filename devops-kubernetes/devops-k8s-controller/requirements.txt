@@ -1,0 +1,10 @@
+kubernetes>=28.1.0
+requests>=2.31.0
+selenium>=4.25.0
+flask>=3.0.0
+python-dotenv>=1.0.0
+# Logging
+colorlog>=6.8.0
+# Retry logic
+tenacity>=8.2.3
+

@@ -1,0 +1,7 @@
+# requirements.txt
+selenium==4.25.0
+webdriver-manager==4.0.2
+fpdf2==2.7.9
+kubernetes==34.1.0
+tenacity==8.2.3
+flask==2.3.3

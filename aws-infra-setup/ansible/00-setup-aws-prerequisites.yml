@@ -1,0 +1,423 @@
+---
+# AWS Prerequisites Setup Playbook
+# Bu playbook EC2 instance ve SSH key'i otomatik olusturur
+
+- name: "Setup AWS Prerequisites (EC2 Instance & SSH Key)"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  
+  vars:
+    # AWS Configuration
+    aws_region: eu-west-1  
+    ec2_instance_name: insider-test-ec2
+    ec2_instance_type: t2.micro
+    ec2_ami_name: "amzn2-ami-hvm-*-x86_64-gp2"  # Amazon Linux 2
+    ssh_key_name: insider-test-key
+    ssh_key_path: "{{ playbook_dir }}/../../.ssh/{{ ssh_key_name }}.pem"
+    security_group_name: insider-test-sg
+    
+  tasks:
+    - name: "Display setup information"
+      debug:
+        msg: |
+          AWS Prerequisites Setup Starting...
+          
+          Will create:
+          - SSH Key Pair: {{ ssh_key_name }}
+          - Security Group: {{ security_group_name }}
+          - EC2 Instance: {{ ec2_instance_name }} ({{ ec2_instance_type }})
+          - Region: {{ aws_region }}
+
+    - name: "Check AWS credentials"
+      command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+      failed_when: false
+
+    - name: "Fail if AWS credentials not configured"
+      fail:
+        msg: |
+          AWS credentials not configured!
+          
+          Please run: aws configure
+          
+          You need:
+          - AWS Access Key ID
+          - AWS Secret Access Key
+          - Default region: {{ aws_region }}
+      when: aws_identity.rc != 0
+
+    - name: "Display AWS identity"
+      debug:
+        msg: "AWS Identity: {{ (aws_identity.stdout | from_json).Arn }}"
+
+    # SSH Key Creation
+    - name: "Check if SSH key pair already exists"
+      command: aws ec2 describe-key-pairs --key-names {{ ssh_key_name }} --region {{ aws_region }}
+      register: existing_key
+      changed_when: false
+      failed_when: false
+
+    - name: "Create SSH key pair"
+      command: aws ec2 create-key-pair --key-name {{ ssh_key_name }} --region {{ aws_region }} --query 'KeyMaterial' --output text
+      register: new_key
+      when: existing_key.rc != 0
+
+    - name: "Create .ssh directory"
+      file:
+        path: "{{ playbook_dir }}/../../.ssh"
+        state: directory
+        mode: '0700'
+      when: existing_key.rc != 0
+
+    - name: "Save private key to file"
+      copy:
+        content: "{{ new_key.stdout }}"
+        dest: "{{ ssh_key_path }}"
+        mode: '0400'
+      when: existing_key.rc != 0 and new_key.stdout is defined
+
+    - name: "Display SSH key status"
+      debug:
+        msg: |
+          {% if existing_key.rc == 0 %}
+          SSH key pair already exists: {{ ssh_key_name }}
+          {% else %}
+          SSH key pair created: {{ ssh_key_name }}
+          Private key saved to: {{ ssh_key_path }}
+          {% endif %}
+
+    # Security Group Creation
+    - name: "Get default VPC"
+      command: aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --region {{ aws_region }} --query 'Vpcs[0].VpcId' --output text
+      register: default_vpc
+      changed_when: false
+      retries: 100
+      delay: 10
+      until: default_vpc.rc == 0
+
+    - name: "Check if security group exists"
+      command: aws ec2 describe-security-groups --filters "Name=group-name,Values={{ security_group_name }}" --region {{ aws_region }} --query 'SecurityGroups[0].GroupId' --output text
+      register: existing_sg
+      changed_when: false
+      failed_when: false
+
+    - name: "Create security group"
+      command: |
+        aws ec2 create-security-group 
+        --group-name {{ security_group_name }} 
+        --description "Security group for Insider Test Automation" 
+        --vpc-id {{ default_vpc.stdout }} 
+        --region {{ aws_region }} 
+        --query 'GroupId' 
+        --output text
+      register: new_sg
+      when: existing_sg.stdout == "None" or existing_sg.stdout == ""
+
+    - name: "Set security group ID"
+      set_fact:
+        sg_id: "{{ new_sg.stdout if (existing_sg.stdout == 'None' or existing_sg.stdout == '') else existing_sg.stdout }}"
+
+    - name: "Add SSH ingress rule"
+      command: |
+        aws ec2 authorize-security-group-ingress 
+        --group-id {{ sg_id }} 
+        --protocol tcp 
+        --port 22 
+        --cidr 0.0.0.0/0 
+        --region {{ aws_region }}
+      register: ssh_rule
+      failed_when: false
+      changed_when: ssh_rule.rc == 0
+
+    - name: "Add HTTPS ingress rule (for kubectl)"
+      command: |
+        aws ec2 authorize-security-group-ingress 
+        --group-id {{ sg_id }} 
+        --protocol tcp 
+        --port 443 
+        --cidr 0.0.0.0/0 
+        --region {{ aws_region }}
+      register: https_rule
+      failed_when: false
+      changed_when: https_rule.rc == 0
+
+    - name: "Display security group status"
+      debug:
+        msg: |
+          Security group ready: {{ security_group_name }}
+          Security group ID: {{ sg_id }}
+          SSH (port 22) allowed from anywhere
+          HTTPS (port 443) allowed for kubectl
+
+    # EC2 Instance Creation
+    - name: "Get latest Amazon Linux 2 AMI"
+      command: |
+        aws ec2 describe-images 
+        --owners amazon 
+        --filters "Name=name,Values={{ ec2_ami_name }}" "Name=state,Values=available" 
+        --region {{ aws_region }} 
+        --query 'sort_by(Images, &CreationDate)[-1].ImageId' 
+        --output text
+      register: ami_id
+      changed_when: false
+      retries: 100
+      delay: 10
+      until: ami_id.rc == 0 and ami_id.stdout is defined and ami_id.stdout != ""
+
+    - name: "Display AMI information"
+      debug:
+        msg: "Using AMI: {{ ami_id.stdout }} (Amazon Linux 2)"
+
+    - name: "Check if EC2 instance already exists"
+      command: |
+        aws ec2 describe-instances 
+        --filters "Name=tag:Name,Values={{ ec2_instance_name }}" "Name=instance-state-name,Values=running,pending,stopping,stopped" 
+        --region {{ aws_region }} 
+        --query 'Reservations[0].Instances[0].InstanceId' 
+        --output text
+      register: existing_instance
+      changed_when: false
+      failed_when: false
+      retries: 50
+      delay: 10
+      until: existing_instance.rc is defined
+
+    - name: "Create EC2 instance"
+      command: |
+        aws ec2 run-instances 
+        --image-id {{ ami_id.stdout }} 
+        --instance-type {{ ec2_instance_type }} 
+        --key-name {{ ssh_key_name }} 
+        --security-group-ids {{ sg_id }} 
+        --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value={{ ec2_instance_name }}}]' 
+        --region {{ aws_region }} 
+        --query 'Instances[0].InstanceId' 
+        --output text
+      register: new_instance
+      when: existing_instance.stdout == "None" or existing_instance.stdout == ""
+      retries: 50
+      delay: 15
+      until: new_instance.rc is defined and (new_instance.rc == 0 or new_instance.skipped is defined)
+
+    - name: "Set instance ID"
+      set_fact:
+        instance_id: "{{ new_instance.stdout if (existing_instance.stdout == 'None' or existing_instance.stdout == '') else existing_instance.stdout }}"
+
+    - name: "Wait for instance to be running"
+      command: |
+        aws ec2 wait instance-running 
+        --instance-ids {{ instance_id }} 
+        --region {{ aws_region }}
+      when: new_instance is defined and new_instance.stdout is defined
+      async: 3600
+      poll: 30
+      register: wait_instance
+      retries: 10
+      delay: 60
+      until: wait_instance.rc is defined and wait_instance.rc == 0
+      ignore_errors: yes
+
+    - name: "Get instance public IP"
+      command: |
+        aws ec2 describe-instances 
+        --instance-ids {{ instance_id }} 
+        --region {{ aws_region }} 
+        --query 'Reservations[0].Instances[0].PublicIpAddress' 
+        --output text
+      register: instance_ip
+      changed_when: false
+      retries: 100
+      delay: 30
+      until: instance_ip.stdout is defined and instance_ip.stdout != "None" and instance_ip.stdout != "" and instance_ip.stdout != "null"
+
+    - name: "Display EC2 instance information"
+      debug:
+        msg: |
+          EC2 INSTANCE BASARIYLA OLUSTURULDU!
+          
+          Instance Details:
+          - Name: {{ ec2_instance_name }}
+          - Instance ID: {{ instance_id }}
+          - Instance Type: {{ ec2_instance_type }}
+          - Public IP: {{ instance_ip.stdout }}
+          - Region: {{ aws_region }}
+          - AMI: {{ ami_id.stdout }}
+
+    - name: "Update inventory file with EC2 IP"
+      lineinfile:
+        path: "{{ playbook_dir }}/inventory.yml"
+        regexp: '^(\s+)ansible_host:.*'
+        line: '\1ansible_host: "{{ instance_ip.stdout }}"'
+        backrefs: yes
+
+    - name: "Wait for SSH port to be open"
+      wait_for:
+        host: "{{ instance_ip.stdout }}"
+        port: 22
+        delay: 60
+        timeout: 3600
+        state: started
+        sleep: 15
+        connect_timeout: 30
+
+    - name: "Display SSH wait message"
+      debug:
+        msg: |
+          
+          EC2 INSTANCE TAM HAZIR OLMASI BEKLENIYOR
+          
+          
+          EC2 instance olusturuldu ama sistem servisleri henuz tam baslamadi.
+          
+          SSH daemon, cloud-init, ve sistem servislerinin tamamen 
+          baslamasi icin 15 DAKIKA bekliyoruz.
+          
+          Bu sure:
+          - Cloud-init yapilandirmasinin tamamlanmasi
+          - SSH daemon'un tam olarak baslamasi  
+          - Sistem guncellemelerinin bitmesi
+          - Network yapilandirmasinin stabilize olmasi icin gerekli.
+          
+
+
+    - name: "Wait 15 minutes for EC2 instance to fully initialize"
+      pause:
+        minutes: 15
+        prompt: |
+          
+          15 DAKIKA BEKLEME BASLADI
+          
+          EC2 instance tamamen hazir olmasi icin bekliyoruz...
+          
+          Neden 15 dakika?
+          - Cloud-init: 5-8 dakika
+          - SSH daemon tam baslatma: 2-4 dakika
+          - Sistem servisleri: 4-8 dakika
+          - Network stabilizasyonu: 2-4 dakika
+          
+          Ctrl+C tusuna basip 'C' ile erken devam edebilirsiniz.
+          (Ancak SSH hazir olmayabilir)
+
+    - name: "Display ready to test SSH"
+      debug:
+        msg: |
+          
+          15 DAKIKA BEKLEME TAMAMLANDI
+          
+          
+          Simdi SSH baglantisini test ediyoruz...
+          
+          Basarisiz olursa otomatik olarak tekrar deneyecek.
+          Retry loglarini goreceksiniz - bu normaldir.
+
+    - name: "Test SSH connection with retries"
+      command: ssh -i {{ ssh_key_path }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 ec2-user@{{ instance_ip.stdout }} "echo 'SSH OK'"
+      register: ssh_test
+      changed_when: false
+      retries: 50
+      delay: 30
+      until: ssh_test.rc is defined and ssh_test.rc == 0
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "Display SSH test result"
+      debug:
+        msg: |
+          {% if ssh_test.rc is defined and ssh_test.rc == 0 %}
+          
+          SSH BAGLANTISI BASARILI!
+          
+          
+          EC2 INSTANCE TANIMLANDI VE HAZIR!
+          
+          EC2 instance tamamen hazir ve erisilebilir durumda!
+          {% else %}
+          
+          SSH BAGLANTISI KURULAMADI
+          
+          
+          EC2 INSTANCE TANIMLANDI AMA SSH HENUZ HAZIR DEGIL
+          
+          15 dakika beklendi ama SSH hala hazir degil.
+          Birkac dakika daha bekleyip manuel test edin:
+          
+          ssh -i {{ ssh_key_path }} ec2-user@{{ instance_ip.stdout }}
+          
+          Veya EC2'yi AWS Console'dan kontrol edin.
+          {% endif %}
+
+    - name: "Save EC2 information to file"
+      copy:
+        content: |
+          # EC2 Instance Information
+          # Generated by 00-setup-aws-prerequisites.yml
+          
+          EC2_PUBLIC_IP={{ instance_ip.stdout }}
+          SSH_KEY_PATH={{ ssh_key_path }}
+          INSTANCE_ID={{ instance_id }}
+          SECURITY_GROUP_ID={{ sg_id }}
+          SSH_KEY_NAME={{ ssh_key_name }}
+          AWS_REGION={{ aws_region }}
+          
+          # Windows PowerShell
+          $env:EC2_PUBLIC_IP = "{{ instance_ip.stdout }}"
+          $env:SSH_KEY_PATH = "{{ ssh_key_path }}"
+          
+          # Linux/Mac
+          export EC2_PUBLIC_IP="{{ instance_ip.stdout }}"
+          export SSH_KEY_PATH="{{ ssh_key_path }}"
+          
+          # SSH Connection
+          ssh -i "{{ ssh_key_path }}" ec2-user@{{ instance_ip.stdout }}
+        dest: "{{ playbook_dir }}/ec2-info.txt"
+
+    - name: "Display final summary"
+      debug:
+        msg: |
+          EC2 INSTANCE TANIMLANDI VE HAZIR!
+          
+          OLUSTURULAN KAYNAKLAR (AVRUPA BOLGESI):
+          
+          SSH Key: {{ ssh_key_name }}
+          Private Key: {{ ssh_key_path }}
+          Security Group: {{ security_group_name }} ({{ sg_id }})
+          EC2 Instance: {{ ec2_instance_name }} ({{ instance_id }})
+          Public IP: {{ instance_ip.stdout }}
+          Region: {{ aws_region }} (EU West - Ireland)
+          SSH Connection: {% if ssh_test.rc is defined and ssh_test.rc == 0 %}READY{% else %}Preparing...{% endif %}
+          
+          
+          EC2 bilgileri kaydedildi: ec2-info.txt
+          
+          AWS CONSOLE'DA GORUNTULEME (AVRUPA):
+          
+          ONEMLI: Sag ustten region'i kontrol edin!
+          Region: EU (Ireland) {{ aws_region }}
+          
+          Direkt Link:
+          https://{{ aws_region }}.console.aws.amazon.com/ec2/home?region={{ aws_region }}#InstanceDetails:instanceId={{ instance_id }}
+          
+          Veya Manuel:
+          1. https://console.aws.amazon.com/ → Giris yapin
+          2. Sag ust koseden region: {{ aws_region }} (Ireland) secin
+          3. Services → EC2 → Instances
+          4. "{{ ec2_instance_name }}" instance'ini goreceksiniz
+          
+          EC2'yi Kontrol Et:
+          
+          ./check-ec2.sh
+          
+          SSH Baglanti:
+          
+          ssh -i "{{ ssh_key_path }}" ec2-user@{{ instance_ip.stdout }}
+          
+          Siradaki Adimlar:
+          
+          1. EC2 kurulumu: ansible-playbook -i inventory.yml 01-setup-ec2.yml
+          2. Tools kurulumu: ansible-playbook -i inventory.yml 02-install-tools.yml
+          3. EKS cluster: ansible-playbook -i inventory.yml 03-create-eks-cluster.yml
+          
+          Veya hepsini birlikte:
+          ansible-playbook -i inventory.yml deploy-all.yml

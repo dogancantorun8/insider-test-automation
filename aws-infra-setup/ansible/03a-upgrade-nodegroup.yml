@@ -1,0 +1,150 @@
+---
+# Upgrade EKS NodeGroup Playbook
+# Bu playbook mevcut nodegroup'u siler ve yeni instance type ile olusturur
+
+- name: "Upgrade EKS NodeGroup to {{ node_type }}"
+  hosts: ec2_instances
+  become: no
+  gather_facts: yes
+
+  tasks:
+    - name: "Check if AWS credentials are configured"
+      command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+      failed_when: false
+
+    - name: "Fail if AWS credentials not configured"
+      fail:
+        msg: "AWS credentials not configured! Run 'aws configure' first."
+      when: aws_identity.rc != 0
+
+    - name: "Display AWS identity"
+      debug:
+        msg: "AWS Identity: {{ aws_identity.stdout }}"
+
+    - name: "Display upgrade information"
+      debug:
+        msg: |
+            WARNING: NODEGROUP UPGRADE 
+          
+          This will:
+          1. Drain and delete existing 'workers' nodegroup
+          2. Create new 'workers' nodegroup with {{ node_type }}
+          
+          Current Configuration:
+          - Cluster: {{ cluster_name }}
+          - Region: {{ aws_region }}
+          - New Instance Type: {{ node_type }}
+          - Node Count: {{ node_count }}
+          
+          
+
+    - name: "Check existing nodegroups"
+      command: eksctl get nodegroup --cluster={{ cluster_name }} --region={{ aws_region }}
+      register: existing_nodegroups
+      changed_when: false
+      failed_when: false
+
+    - name: "Display existing nodegroups"
+      debug:
+        msg: "{{ existing_nodegroups.stdout_lines }}"
+      when: existing_nodegroups.rc == 0
+
+    - name: "Delete old 'workers' nodegroup"
+      command: >
+        eksctl delete nodegroup
+        --cluster={{ cluster_name }}
+        --region={{ aws_region }}
+        --name=workers
+        --drain=true
+        --wait
+      register: nodegroup_deletion
+      when: "'workers' in existing_nodegroups.stdout"
+      timeout: 900
+      ignore_errors: yes
+
+    - name: "Display deletion result"
+      debug:
+        msg: "{{ nodegroup_deletion.stdout_lines }}"
+      when: nodegroup_deletion is defined and nodegroup_deletion.stdout_lines is defined
+
+    - name: "Wait for nodegroup deletion to complete"
+      pause:
+        seconds: 30
+      when: nodegroup_deletion is defined and nodegroup_deletion.changed
+
+    - name: "Create EKS cluster configuration file"
+      template:
+        src: eks-cluster-config.yaml.j2
+        dest: /tmp/eks-nodegroup-config.yaml
+        mode: '0644'
+
+    - name: "Create new nodegroup with updated instance type"
+      command: >
+        eksctl create nodegroup
+        --cluster={{ cluster_name }}
+        --region={{ aws_region }}
+        --name=workers
+        --node-type={{ node_type }}
+        --nodes={{ node_count }}
+        --nodes-min=1
+        --nodes-max=10
+        --ssh-access
+        --ssh-public-key={{ ssh_key_name }}
+        --managed
+      register: nodegroup_creation
+      timeout: 900
+
+    - name: "Display creation result"
+      debug:
+        msg: "{{ nodegroup_creation.stdout_lines }}"
+
+    - name: "Wait for nodes to be ready"
+      shell: kubectl get nodes --no-headers | grep -c "Ready" || echo "0"
+      register: ready_nodes_count
+      until: ready_nodes_count.stdout | int >= node_count | int
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: "Get node details"
+      command: kubectl get nodes -o wide
+      register: node_details
+      changed_when: false
+
+    - name: "Verify node instance types"
+      shell: >
+        kubectl get nodes -o json | 
+        jq -r '.items[] | "\(.metadata.name): \(.metadata.labels["node.kubernetes.io/instance-type"])"'
+      register: node_instance_types
+      changed_when: false
+
+    - name: "Display upgrade completion"
+      debug:
+        msg: |
+          NODEGROUP UPGRADE BASARIYLA TAMAMLANDI!
+          
+          New NodeGroup Configuration:
+          - Instance Type: {{ node_type }}
+          - Node Count: {{ ready_nodes_count.stdout }}
+          - Cluster: {{ cluster_name }}
+          - Region: {{ aws_region }}
+          
+          Node Details:
+          {{ node_details.stdout }}
+          
+          Instance Types:
+          {{ node_instance_types.stdout }}
+          
+           Nodes are ready!
+          
+          Next Steps:
+          - cd ~/insider/devops-kubernetes
+          - python3 deploy_k8s.py --node-count 2
+
+    - name: "Clean up temporary files"
+      file:
+        path: /tmp/eks-nodegroup-config.yaml
+        state: absent
+

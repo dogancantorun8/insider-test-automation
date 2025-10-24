@@ -1,0 +1,14 @@
+---
+# Ansible Inventory
+# EC2 instance'lari burada tanimlanir
+# Global degiskenler group_vars/all.yml dosyasinda tanimlidir
+
+all:
+  children:
+    ec2_instances:
+      hosts:
+        insider-test-ec2:
+          ansible_host: "34.240.70.218"
+          ansible_user: ec2-user
+          ansible_ssh_private_key_file: "{{ ssh_key_path }}"
+          ansible_python_interpreter: /usr/bin/python3

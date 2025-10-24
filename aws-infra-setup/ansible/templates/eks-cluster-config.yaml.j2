@@ -1,0 +1,55 @@
+# eksctl configuration file version
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+# Cluster metadata
+metadata:
+  name: {{ cluster_name }}
+  region: {{ aws_region }}
+  version: "1.28"
+
+# Node Groups
+nodeGroups:
+  - name: workers                       # Nodegroup adi
+    instanceType: {{ node_type }}       # EC2 instance tipi (t2.small, t3.medium gibi)
+    desiredCapacity: {{ node_count }}   
+    minSize: 1                          # Minimum node sayisi (auto-scaling icin)
+    maxSize: 5                          # Maximum node sayisi (auto-scaling icin)
+    volumeSize: 20                      # Her node'un disk boyutu (GB)
+    ssh:
+      allow: true                       # SSH erisimi aktif
+      publicKeyName: {{ ssh_key_name | default('default') }}  # SSH key adi
+    iam:
+      withAddonPolicies:                # IAM permissions (AWS servislere erisim icin)
+        imageBuilder: false             # DockerHub kullaniliyor
+        autoScaler: true                # Cluster auto-scaling icin GEREKLI
+        externalDNS: false              # DNS yonetimi kullanilmiyor
+        certManager: false              # SSL sertifika yonetimi kullanilmiyor
+        appMesh: false                  # Service mesh kullanilmiyor
+        ebs: true                       # EBS volume yonetimi icin GEREKLI
+        fsx: false                      # FSx file system kullanilmiyor
+        efs: false                      # EFS kullanilmiyor
+        awsLoadBalancerController: false # LoadBalancer kullanilmiyor (ClusterIP var)
+        xRay: false                     # AWS X-Ray tracing kullanilmiyor
+        cloudWatch: true                # CloudWatch monitoring icin GEREKLI
+
+# Kubernetes Addons (cluster icin gerekli servisler)
+addons:
+  - name: vpc-cni                       # Pod networking (her pod IP alir)
+    version: latest
+  - name: coredns                       # DNS resolution (pod'lar arasi isim cozumleme)
+    version: latest
+  - name: kube-proxy                    # Network proxy (service routing)
+    version: latest
+  - name: aws-ebs-csi-driver            # EBS volume driver (persistent storage)
+    version: latest
+
+# IAM OIDC Provider (pod'larin AWS servislerine erisimi icin)
+iam:
+  withOIDC: true                        # OIDC provider aktif (IAM roles for service accounts)
+
+# CloudWatch Logging (cluster log'larini CloudWatch'a gonder)
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]                  # Tum log tiplerini aktif et
+    logRetentionInDays: 7               # Log'lari 7 gun sakla

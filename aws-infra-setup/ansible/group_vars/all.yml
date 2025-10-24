@@ -1,0 +1,39 @@
+---
+# Global Variables
+
+# AWS Configuration
+aws_region: eu-west-1
+cluster_name: insider-test-cluster
+node_type: t2.small  # Update t2.micro - 2GB RAM, chroome podlari icin daha iyi
+node_count: 2 # EKS cluster icin node sayisi
+ssh_key_name: insider-test-key
+
+# Tools Versions
+kubectl_version: "v1.28.0"
+eksctl_version: "latest"
+aws_cli_version: "2"
+
+# Project Configuration
+project_name: insider-test-automation
+namespace: test-automation
+docker_image: dogancan4040/insider-test-controller:latest
+
+# Paths
+project_path: /home/ec2-user/insider
+devops_k8s_path: "{{ project_path }}/devops-kubernetes"
+aws_infra_path: "{{ project_path }}/aws-infra-setup"
+
+# Security
+ssh_key_path: "{{ lookup('env', 'SSH_KEY_PATH') | default('~/.ssh/id_rsa') }}"
+ec2_public_ip: "{{ lookup('env', 'EC2_PUBLIC_IP') }}"
+
+# Docker Configuration
+docker_compose_version: "2.20.0"
+
+# Python Packages
+python_packages:
+  - kubernetes
+  - requests
+  - flask
+  - selenium
+  - python-dotenv

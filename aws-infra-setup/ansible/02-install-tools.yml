@@ -1,0 +1,111 @@
+---
+# Tools Installation Playbook
+# Bu playbook kubectl, eksctl ve AWS CLI kurulumunu yapar
+
+- name: "Install Kubernetes and AWS Tools"
+  hosts: ec2_instances
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: "Get latest kubectl version"
+      uri:
+        url: "https://dl.k8s.io/release/stable.txt"
+        return_content: yes
+      register: kubectl_latest_version
+      when: kubectl_version == "latest"
+
+    - name: "Set kubectl version"
+      set_fact:
+        kubectl_download_version: "{{ kubectl_latest_version.content.strip() }}"
+      when: kubectl_version == "latest"
+
+    - name: "Set kubectl version (manual)"
+      set_fact:
+        kubectl_download_version: "{{ kubectl_version }}"
+      when: kubectl_version != "latest"
+
+    - name: "Download kubectl"
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_download_version }}/bin/linux/amd64/kubectl"
+        dest: /tmp/kubectl
+        mode: '0755'
+
+    - name: "Install kubectl"
+      copy:
+        src: /tmp/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        remote_src: yes
+
+    - name: "Download eksctl"
+      get_url:
+        url: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz"
+        dest: /tmp/eksctl.tar.gz
+
+    - name: "Extract eksctl"
+      unarchive:
+        src: /tmp/eksctl.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: "Install eksctl"
+      copy:
+        src: /tmp/eksctl
+        dest: /usr/local/bin/eksctl
+        mode: '0755'
+        remote_src: yes
+
+    - name: "Download AWS CLI"
+      get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+        dest: /tmp/awscliv2.zip
+
+    - name: "Extract AWS CLI"
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: yes
+
+    - name: "Install AWS CLI"
+      command: /tmp/aws/install
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: "Verify kubectl installation"
+      command: /usr/local/bin/kubectl version --client
+      register: kubectl_version_output
+      changed_when: false
+
+    - name: "Verify eksctl installation"
+      command: /usr/local/bin/eksctl version
+      register: eksctl_version_output
+      changed_when: false
+
+    - name: "Verify AWS CLI installation"
+      command: /usr/local/bin/aws --version
+      register: aws_version_output
+      changed_when: false
+
+    - name: "Clean up temporary files"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/kubectl
+        - /tmp/eksctl.tar.gz
+        - /tmp/eksctl
+        - /tmp/awscliv2.zip
+        - /tmp/aws
+
+    - name: "Display installation results"
+      debug:
+        msg: |
+           Tools installation completed successfully!
+          
+          Installed versions:
+          - kubectl: {{ kubectl_version_output.stdout_lines[0] }}
+          - eksctl: {{ eksctl_version_output.stdout_lines[0] }}
+          - aws: {{ aws_version_output.stdout_lines[0] }}
+          
+          Next step: ansible-playbook 03-create-eks-cluster.yml

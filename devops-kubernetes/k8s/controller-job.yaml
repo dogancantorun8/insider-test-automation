@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-controller-job
+  namespace: test-automation
+  labels:
+    app: test-controller
+spec:
+  ttlSecondsAfterFinished: 3600  # Job tamamlandiktan 1 saat sonra otomatik silinir
+  backoffLimit: 3  # Basarisiz olursa 3 kez tekrar dener
+  
+  template:
+    metadata:
+      labels:
+        app: test-controller
+    spec:
+      serviceAccountName: test-controller-sa  # Kubernetes API erisimi icin RBAC yetkisi
+      restartPolicy: Never  # Job tamamlaninca restart etme (CrashLoopBackOff onlemek icim Never)
+      
+      containers:
+      - name: test-controller
+        image: dogancan4040/insider-test-controller:latest
+        imagePullPolicy: Always
+        
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace  # Pod'un namespace'ini otomatik al
+        - name: CHROME_NODE_SERVICE
+          valueFrom:
+            configMapKeyRef:  # ConfigMap'ten environment variable al
+              name: test-config
+              key: CHROME_NODE_SERVICE
+        - name: CHROME_NODE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: test-config
+              key: CHROME_NODE_PORT
+        - name: BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: test-config
+              key: BASE_URL
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: test-config
+              key: LOG_LEVEL
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        volumeMounts:
+        - name: test-results
+          mountPath: /app/test_results
+      
+      volumes:
+      - name: test-results
+        emptyDir: {}  # Gecici volume, Pod silinince icerik de silinir
+

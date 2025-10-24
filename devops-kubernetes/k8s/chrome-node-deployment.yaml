@@ -1,0 +1,69 @@
+apiVersion: apps/v1  
+kind: Deployment     
+metadata:
+  name: chrome-node           
+  namespace: test-automation  
+  labels:
+    app: chrome-node  # Gruplama ve secim icin etiket
+spec:
+  replicas: 1  # Varsayilan 1, dinamik olarak 5'e kadar arttirilebilir
+  selector:
+    matchLabels:
+      app: chrome-node  # Bu etiketle eslesen Pod'lari yonet
+  
+  template:
+    metadata:
+      labels:
+        app: chrome-node  # Yukaridaki selector ile eslesir
+    spec:
+      containers:
+      - name: chrome-node  
+        image: selenium/standalone-chrome:latest
+        imagePullPolicy: Always 
+        ports:
+        - containerPort: 4444  # Selenium WebDriver endpoint (ZORUNLU)
+          name: selenium
+          protocol: TCP
+        env:
+        - name: SE_NODE_MAX_SESSIONS
+          value: "1"  # Her node'da max 1 oturum
+        - name: SE_NODE_SESSION_TIMEOUT
+          value: "300"  # Oturum zaman asimi: 5 dakika
+        - name: SE_SCREEN_WIDTH
+          value: "1920" 
+        - name: SE_SCREEN_HEIGHT
+          value: "1080"
+        resources:
+          requests:
+            memory: "256Mi" 
+            cpu: "250m"  
+          limits:
+            memory: "512Mi"  
+            cpu: "500m"
+        volumeMounts:
+        - name: dshm  # Chrome paylaşımlı bellek gerektirir, varsayılan 64MB yetersiz, 512MB veriyoruz
+          mountPath: /dev/shm
+        readinessProbe:
+          httpGet:
+            path: /wd/hub/status
+            port: 4444
+          initialDelaySeconds: 10  # Ilk kontrolden once 10s bekle
+          periodSeconds: 5  # Her 5 saniyede kontrol et
+          timeoutSeconds: 5
+          failureThreshold: 3  # 3 basarisizliktan sonra hazir degil isaretle
+        
+        livenessProbe:
+          httpGet:
+            path: /wd/hub/status
+            port: 4444
+          initialDelaySeconds: 30  # Tam baslamasi icin daha fazla sure ver
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3  # 3 basarisizliktan sonra yeniden baslat
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory  # RAM'de tut (diskten daha hizli)
+          sizeLimit: 512Mi  
+      restartPolicy: Always  # Container dursa bile her zaman yeniden baslat
+

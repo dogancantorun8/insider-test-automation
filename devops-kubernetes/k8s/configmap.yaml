@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: test-automation
+data:
+  # Test configuration
+  BASE_URL: "https://useinsider.com"
+  
+  # Chrome Node configuration
+  CHROME_NODE_SERVICE: "chrome-node-service.test-automation.svc.cluster.local"
+  CHROME_NODE_PORT: "4444"
+  
+  # Test execution settings
+  HEADLESS: "true"
+  IMPLICIT_WAIT: "10"
+  PAGE_LOAD_TIMEOUT: "30"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+

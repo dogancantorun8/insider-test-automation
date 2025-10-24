@@ -1,0 +1,50 @@
+# Test Controller Pod Dockerfile
+# Bu Dockerfile Kubernetes'te Test Controller Pod'unu olusturmak icin kullanilir
+
+
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Health check icin gerekli curl kur
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python kutuphanelerini kur
+COPY devops-kubernetes/devops-k8s-controller/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Test orchestration kodu
+COPY devops-kubernetes/devops-k8s-controller/controller.py .
+
+# Tum test case'ler ve base test class'lar
+COPY test-development/ ./test_development/
+
+# JSON/PDF raporlar burada saklanir
+RUN mkdir -p /app/test_results
+
+# Health check endpoint: /health
+EXPOSE 8080
+
+# Python output'u aninda goster (log icin)
+ENV PYTHONUNBUFFERED=1
+
+# Python import path'i ayarla
+ENV PYTHONPATH=/app
+
+# Chrome Node service DNS (test-automation namespace'inde)
+# Controller Pod'un Chrome Node Service'i bulmasi icin DNS adresini bilmesi gerekir en onemli kisim!!
+ENV CHROME_NODE_SERVICE=chrome-node-service.test-automation.svc.cluster.local
+
+# Selenium WebDriver port : Controller Pod'un Chrome Node'a nasıl bağlanacağını belirler
+ENV CHROME_NODE_PORT=4444
+
+# Kubernetes liveness/readiness icin - Her 30 saniyede health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Test orchestration baslar
+CMD ["python", "controller.py"]
+
+

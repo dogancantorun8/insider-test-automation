@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+
+# Test results
+test_results/
+*.log
+screenshots/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Kubernetes (don't include in images)
+k8s/
+*.yaml
+*.yml
+
+# Scripts (not needed in container)
+scripts/
+
+# Task files
+*.pdf
+*.txt
+COMMANDS_STEP_BY_STEP.txt
+KUBERNETES_ROADMAP.md
+BUILD_DOCKER.md
+DOCKER_COMMANDS.md
+QUICK_START.md
+
+# Environment
+.env
+.env.local

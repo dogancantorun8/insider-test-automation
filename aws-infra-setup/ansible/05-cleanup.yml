@@ -1,0 +1,79 @@
+---
+# Cleanup Playbook
+# Bu playbook AWS kaynaklarini temizler
+
+- name: "Cleanup AWS Resources"
+  hosts: ec2_instances
+  become: no
+  gather_facts: yes
+
+  vars:
+    confirm_cleanup: false
+
+  tasks:
+    - name: "Display cleanup warning"
+      pause:
+        prompt: |
+            WARNING: This will delete all AWS resources!
+          
+          Resources to be deleted:
+          - EKS Cluster: {{ cluster_name }}
+          - Kubernetes Resources in namespace: {{ namespace }}
+          - Local kubeconfig
+          
+          Are you sure you want to continue? (yes/no)
+      register: cleanup_confirmation
+
+    - name: "Set cleanup confirmation"
+      set_fact:
+        confirm_cleanup: "{{ 'yes' in cleanup_confirmation.user_input.lower() }}"
+
+    - name: "Skip cleanup if not confirmed"
+      meta: end_play
+      when: not confirm_cleanup
+
+    - name: "Delete Kubernetes namespace"
+      command: kubectl delete namespace {{ namespace }}
+      register: namespace_deletion
+      failed_when: false
+
+    - name: "Display namespace deletion result"
+      debug:
+        msg: "Namespace deletion: {{ namespace_deletion.stdout }}"
+
+    - name: "Delete EKS cluster"
+      command: eksctl delete cluster --name={{ cluster_name }} --region={{ aws_region }} --wait
+      register: cluster_deletion
+      failed_when: false
+
+    - name: "Display cluster deletion result"
+      debug:
+        msg: "Cluster deletion: {{ cluster_deletion.stdout }}"
+
+    - name: "Remove kubeconfig"
+      file:
+        path: "{{ ansible_env.HOME }}/.kube/config"
+        state: absent
+      become: no
+
+    - name: "Clean up temporary files"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/eks-cluster-config.yaml
+        - /tmp/kubectl
+        - /tmp/eksctl.tar.gz
+        - /tmp/eksctl
+        - /tmp/awscliv2.zip
+
+    - name: "Display cleanup completion"
+      debug:
+        msg: |
+           Cleanup completed successfully!
+          
+          Deleted resources:
+          - EKS Cluster: {{ cluster_name }}
+          - Kubernetes Namespace: {{ namespace }}
+          - Local kubeconfig
+        

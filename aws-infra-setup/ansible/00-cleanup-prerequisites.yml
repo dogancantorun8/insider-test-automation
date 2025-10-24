@@ -1,0 +1,144 @@
+---
+# AWS Prerequisites Cleanup Playbook
+# Bu playbook EC2, Security Group ve SSH Key'i siler
+
+- name: "Cleanup AWS Prerequisites"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  
+  vars:
+    aws_region: us-west-2
+    ec2_instance_name: insider-test-ec2
+    ssh_key_name: insider-test-key
+    security_group_name: insider-test-sg
+    
+  tasks:
+    - name: "Display cleanup warning"
+      pause:
+        prompt: |
+           WARNING: AWS RESOURCES WILL BE DELETED! 
+          
+          Resources to be deleted:
+          - EC2 Instance: {{ ec2_instance_name }}
+          - Security Group: {{ security_group_name }}
+          - SSH Key Pair: {{ ssh_key_name }}
+          - Region: {{ aws_region }}
+          
+          Type 'yes' to continue, anything else to abort:
+      register: cleanup_confirmation
+
+    - name: "Abort if not confirmed"
+      fail:
+        msg: "Cleanup aborted by user"
+      when: cleanup_confirmation.user_input != 'yes'
+
+    - name: "Check AWS credentials"
+      command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+      failed_when: false
+
+    - name: "Fail if AWS credentials not configured"
+      fail:
+        msg: " AWS credentials not configured! Run: aws configure"
+      when: aws_identity.rc != 0
+
+    # EC2 Instance Cleanup
+    - name: "Get EC2 instance ID"
+      command: |
+        aws ec2 describe-instances 
+        --filters "Name=tag:Name,Values={{ ec2_instance_name }}" "Name=instance-state-name,Values=running,pending,stopping,stopped" 
+        --region {{ aws_region }} 
+        --query 'Reservations[0].Instances[0].InstanceId' 
+        --output text
+      register: instance_id
+      changed_when: false
+      failed_when: false
+
+    - name: "Terminate EC2 instance"
+      command: aws ec2 terminate-instances --instance-ids {{ instance_id.stdout }} --region {{ aws_region }}
+      when: instance_id.stdout != "None" and instance_id.stdout != ""
+      register: terminate_result
+
+    - name: "Wait for instance termination"
+      command: aws ec2 wait instance-terminated --instance-ids {{ instance_id.stdout }} --region {{ aws_region }}
+      when: instance_id.stdout != "None" and instance_id.stdout != ""
+
+    - name: "Display EC2 cleanup result"
+      debug:
+        msg: |
+          {% if instance_id.stdout != "None" and instance_id.stdout != "" %}
+           EC2 instance terminated: {{ instance_id.stdout }}
+          {% else %}
+          No EC2 instance found with name: {{ ec2_instance_name }}
+          {% endif %}
+
+    # Security Group Cleanup
+    - name: "Get security group ID"
+      command: |
+        aws ec2 describe-security-groups 
+        --filters "Name=group-name,Values={{ security_group_name }}" 
+        --region {{ aws_region }} 
+        --query 'SecurityGroups[0].GroupId' 
+        --output text
+      register: sg_id
+      changed_when: false
+      failed_when: false
+
+    - name: "Delete security group"
+      command: aws ec2 delete-security-group --group-id {{ sg_id.stdout }} --region {{ aws_region }}
+      when: sg_id.stdout != "None" and sg_id.stdout != ""
+      register: sg_delete_result
+      failed_when: false
+
+    - name: "Display security group cleanup result"
+      debug:
+        msg: |
+          {% if sg_id.stdout != "None" and sg_id.stdout != "" %}
+           Security group deleted: {{ sg_id.stdout }}
+          {% else %}
+          No security group found with name: {{ security_group_name }}
+          {% endif %}
+
+    # SSH Key Cleanup
+    - name: "Delete SSH key pair from AWS"
+      command: aws ec2 delete-key-pair --key-name {{ ssh_key_name }} --region {{ aws_region }}
+      register: key_delete_result
+      failed_when: false
+
+    - name: "Display SSH key cleanup result"
+      debug:
+        msg: |
+          {% if key_delete_result.rc == 0 %}
+           SSH key pair deleted from AWS: {{ ssh_key_name }}
+          {% else %}
+          SSH key pair not found in AWS: {{ ssh_key_name }}
+          {% endif %}
+
+    - name: "Remove local SSH private key"
+      file:
+        path: "{{ playbook_dir }}/../../.ssh/{{ ssh_key_name }}.pem"
+        state: absent
+
+    - name: "Display local key cleanup result"
+      debug:
+        msg: " Local SSH private key removed (if existed)"
+
+    # Clean up generated files
+    - name: "Remove ec2-info.txt"
+      file:
+        path: "{{ playbook_dir }}/ec2-info.txt"
+        state: absent
+
+    - name: "Display final cleanup summary"
+      debug:
+        msg: |
+           CLEANUP COMPLETED!
+          
+           Deleted Resources:
+          - EC2 Instance: {{ instance_id.stdout if (instance_id.stdout != "None" and instance_id.stdout != "") else "Not found" }}
+          - Security Group: {{ sg_id.stdout if (sg_id.stdout != "None" and sg_id.stdout != "") else "Not found" }}
+          - SSH Key (AWS): {{ ssh_key_name }}
+          - SSH Key (Local): Removed
+          - ec2-info.txt: Removed

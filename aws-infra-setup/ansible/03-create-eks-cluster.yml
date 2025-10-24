@@ -1,0 +1,128 @@
+---
+# EKS Cluster Creation Playbook
+# Bu playbook AWS EKS cluster olusturur ve kubectl'i konfigure eder
+
+- name: "Create EKS Cluster and Configure kubectl"
+  hosts: ec2_instances
+  become: no
+  gather_facts: yes
+
+  vars:
+    cluster_config_file: "/tmp/eks-cluster-config.yaml"
+
+  tasks:
+    - name: "Check if AWS credentials are configured"
+      command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+      failed_when: false
+
+    - name: "Fail if AWS credentials not configured"
+      fail:
+        msg: "AWS credentials not configured! Run 'aws configure' first."
+      when: aws_identity.rc != 0
+
+    - name: "Display AWS identity"
+      debug:
+        msg: "AWS Identity: {{ aws_identity.stdout }}"
+
+    - name: "Check if cluster already exists"
+      command: "eksctl get cluster --name={{ cluster_name }} --region={{ aws_region }}"
+      register: cluster_exists
+      changed_when: false
+      failed_when: false
+
+    - name: "Delete existing cluster if requested"
+      command: "eksctl delete cluster --name={{ cluster_name }} --region={{ aws_region }} --wait"
+      when: cluster_exists.rc == 0 and delete_existing_cluster | default(false)
+      register: cluster_deleted
+
+    - name: "Wait for cluster deletion"
+      wait_for:
+        timeout: 600
+      when: cluster_deleted is defined and cluster_deleted.changed
+
+    - name: "Create EKS cluster configuration file"
+      template:
+        src: eks-cluster-config.yaml.j2
+        dest: "{{ cluster_config_file }}"
+        mode: '0644'
+
+    - name: "Create EKS cluster"
+      command: "eksctl create cluster --config-file={{ cluster_config_file }}"
+      register: cluster_creation
+      when: cluster_exists.rc != 0 or delete_existing_cluster | default(false)
+
+    - name: "Update kubeconfig for existing cluster"
+      command: "aws eks update-kubeconfig --region={{ aws_region }} --name={{ cluster_name }}"
+      when: cluster_exists.rc == 0 and not (delete_existing_cluster | default(false))
+
+    - name: "Verify cluster connection"
+      command: kubectl get nodes
+      register: cluster_nodes
+      changed_when: false
+      retries: 10
+      delay: 30
+      until: cluster_nodes.rc == 0
+
+    - name: "Wait for all nodes to be Ready"
+      shell: kubectl get nodes --no-headers | grep -c "Ready" || echo "0"
+      register: ready_nodes_count
+      until: ready_nodes_count.stdout | int >= 2
+      retries: 60
+      delay: 30
+      changed_when: false
+
+    - name: "Verify cluster is healthy"
+      command: kubectl get --raw=/healthz
+      register: cluster_health
+      changed_when: false
+      failed_when: cluster_health.stdout != "ok"
+
+    - name: "Get cluster status from AWS"
+      command: aws eks describe-cluster --name={{ cluster_name }} --region={{ aws_region }} --query 'cluster.status' --output text
+      register: eks_cluster_status
+      changed_when: false
+
+    - name: "Fail if cluster is not ACTIVE"
+      fail:
+        msg: " EKS Cluster is not ACTIVE! Current status: {{ eks_cluster_status.stdout }}"
+      when: eks_cluster_status.stdout != "ACTIVE"
+
+    - name: "Get node details"
+      command: kubectl get nodes -o wide
+      register: node_details
+      changed_when: false
+
+    - name: "Verify kubectl context"
+      command: kubectl config current-context
+      register: current_context
+      changed_when: false
+
+    - name: "Display cluster information"
+      debug:
+        msg: |
+           EKS CLUSTER BASARIYLA OLUSTURULDU VE DOGRULANDI! 
+          
+          Cluster Details:
+          - Name: {{ cluster_name }}
+          - Region: {{ aws_region }}
+          - Node Type: {{ node_type }}
+          - Status: {{ eks_cluster_status.stdout }}
+          - Health: {{ cluster_health.stdout }}
+          - kubectl Context: {{ current_context.stdout }}
+          
+          Cluster Nodes:
+          {{ node_details.stdout }}
+          
+           Tum kontroller basarili!
+           kubectl konfigure edildi!
+           Cluster ACTIVE durumda!
+           Tum node'lar READY!
+          
+          Next step: ansible-playbook 04-deploy-k8s-resources.yml
+
+    - name: "Clean up temporary files"
+      file:
+        path: "{{ cluster_config_file }}"
+        state: absent

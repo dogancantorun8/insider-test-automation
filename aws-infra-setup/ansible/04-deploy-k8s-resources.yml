@@ -1,0 +1,150 @@
+---
+# Kubernetes Resources Deployment Playbook
+# Bu playbook devops-kubernetes klasorundeki resources'lari EKS cluster'a deploy eder
+
+- name: "Deploy Kubernetes Resources to EKS Cluster"
+  hosts: ec2_instances
+  become: no
+  gather_facts: yes
+
+  tasks:
+    - name: "Check if cluster is accessible"
+      command: kubectl cluster-info
+      register: cluster_info
+      changed_when: false
+      failed_when: false
+
+    - name: "Fail if cluster not accessible"
+      fail:
+        msg: "Cannot access EKS cluster! Make sure cluster is running and kubectl is configured."
+      when: cluster_info.rc != 0
+
+    - name: "Display cluster info"
+      debug:
+        msg: "Cluster Info: {{ cluster_info.stdout_lines }}"
+
+    - name: "Check if devops-kubernetes directory exists"
+      stat:
+        path: "{{ devops_k8s_path }}"
+      register: devops_k8s_dir
+
+    - name: "Fail if devops-kubernetes directory not found"
+      fail:
+        msg: "devops-kubernetes directory not found at {{ devops_k8s_path }}"
+      when: not devops_k8s_dir.stat.exists
+
+    - name: "Copy project files to EC2"
+      synchronize:
+        src: "{{ playbook_dir }}/../../"
+        dest: "{{ project_path }}/"
+        delete: no
+        recursive: yes
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=venv"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      delegate_to: localhost
+      when: false  # Skip - files already copied manually
+
+    - name: "Pull Docker image"
+      command: docker pull {{ docker_image }}
+      register: docker_pull_result
+
+    - name: "Display Docker pull result"
+      debug:
+        msg: "Docker image pulled: {{ docker_pull_result.stdout }}"
+
+    - name: "Create namespace for test automation"
+      command: kubectl create namespace {{ namespace }}
+      register: namespace_creation
+      failed_when: false
+
+    - name: "Verify namespace exists"
+      command: kubectl get namespace {{ namespace }}
+      register: namespace_check
+      changed_when: false
+      retries: 10
+      delay: 10
+      until: namespace_check.rc == 0
+
+    - name: "Verify namespace is Active"
+      shell: kubectl get namespace {{ namespace }} -o jsonpath='{.status.phase}'
+      register: namespace_status
+      changed_when: false
+      failed_when: namespace_status.stdout != "Active"
+
+    - name: "Verify Docker image is accessible"
+      command: docker images {{ docker_image }}
+      register: docker_image_check
+      changed_when: false
+
+    - name: "Verify project files exist"
+      stat:
+        path: "{{ devops_k8s_path }}/deploy_k8s.py"
+      register: deploy_script
+
+    - name: "Fail if deploy script not found"
+      fail:
+        msg: " deploy_k8s.py script not found at {{ devops_k8s_path }}"
+      when: not deploy_script.stat.exists
+
+    - name: "Verify kubectl can access cluster"
+      command: kubectl cluster-info
+      register: cluster_info
+      changed_when: false
+      failed_when: cluster_info.rc != 0
+
+    - name: "Get all namespaces"
+      command: kubectl get namespaces
+      register: all_namespaces
+      changed_when: false
+
+    - name: "Verify Python3 is available"
+      command: python3 --version
+      register: python_version
+      changed_when: false
+
+    - name: "Verify kubernetes Python module"
+      command: python3 -c "import kubernetes; print('OK')"
+      register: k8s_module_check
+      changed_when: false
+      failed_when: k8s_module_check.stdout != "OK"
+
+    - name: "Get cluster resource status"
+      command: kubectl get all -n {{ namespace }}
+      register: namespace_resources
+      changed_when: false
+      failed_when: false
+
+    - name: "Display infrastructure readiness"
+      debug:
+        msg: |
+          KUBERNETES INFRASTRUCTURE  HAZIR!
+          
+          Infrastructure Checks:
+           Namespace '{{ namespace }}' created and ACTIVE
+           Docker image accessible: {{ docker_image }}
+           kubectl connected to cluster
+           Python3 available: {{ python_version.stdout }}
+           Kubernetes Python module loaded
+           deploy_k8s.py script found
+          
+          Namespaces:
+          {{ all_namespaces.stdout }}
+          
+          Current Resources in {{ namespace }}:
+          {{ namespace_resources.stdout if namespace_resources.rc == 0 else 'No resources yet (normal)' }}
+          
+          Tum kontroller basarili!
+          Infrastructure test execution icin hazir!
+          
+          To run tests manually:
+          - cd {{ devops_k8s_path }}
+          - python3 deploy_k8s.py --node-count 2
+          - python3 deploy_k8s.py --node-count 3
+          
+          To check infrastructure status:
+          - kubectl get pods -n {{ namespace }}
+          - kubectl get services -n {{ namespace }}
+          - kubectl get deployments -n {{ namespace }}

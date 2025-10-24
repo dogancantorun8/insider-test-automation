@@ -1,0 +1,95 @@
+---
+# EC2 Instance Setup Playbook
+# Bu playbook EC2 instance'ini kurulum icin hazirlar
+
+- name: "Setup EC2 Instance for Insider Test Automation"
+  hosts: ec2_instances
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    # System packages to install
+    system_packages:
+      - curl
+      - wget
+      - unzip
+      - git
+      - vim
+      - htop
+      - tree
+      - jq
+      - python3
+      - python3-pip
+      - docker
+      - openssh-clients
+      - ca-certificates
+
+  tasks:
+    - name: "Update system packages"
+      package:
+        name: "*"
+        state: latest
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: "Install system packages"
+      package:
+        name: "{{ system_packages }}"
+        state: present
+
+    - name: "Start and enable Docker service"
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: "Add ec2-user to docker group"
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: "Create project directories"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+      loop:
+        - "{{ project_path }}"
+        - "{{ aws_infra_path }}"
+        - "boolean home/ec2-user/.kube"
+        - "{{ project_path }}/logs"
+
+    - name: "Set up SSH key permissions"
+      file:
+        path: "{{ ssh_key_path }}"
+        mode: '0600'
+        owner: ec2-user
+        group: ec2-user
+      when: false  # Skip this task - SSH key is on local machine, not EC2
+
+    - name: "Configure Python3 as default"
+      alternatives:
+        name: python
+        link: /usr/bin/python
+        path: /usr/bin/python3
+
+    - name: "Install Python packages"
+      pip:
+        name: "{{ python_packages }}"
+        state: present
+        executable: pip3
+
+    - name: "Display setup completion message"
+      debug:
+        msg: |
+           EC2 Instance setup completed successfully!
+          
+          Next steps:
+          1. Run: ansible-playbook 02-install-tools.yml
+          
+          Project path: {{ project_path }}
+          User: ec2-user
+          Docker: Enabled
