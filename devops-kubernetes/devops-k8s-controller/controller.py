@@ -204,21 +204,21 @@ class TestController:
                 'id': 'test_3',
                 'name': 'QA Jobs Filtreleme',
                 'file': 'tests.test_qa_page',
-                'method': 'test_qa_jobs_filtering',
+                'method': 'test_job_listings',
                 'priority': 2
             },
             {
                 'id': 'test_4',
-                'name': 'Is Detaylari Dogrulama',
+                'name': 'QA Careers Sayfasi Kontrolu',
                 'file': 'tests.test_qa_page',
-                'method': 'test_job_details',
+                'method': 'test_qa_careers_page',
                 'priority': 2
             },
             {
                 'id': 'test_5',
-                'name': 'Lever Yonlendirme',
+                'name': 'QA Jobs Sayfasi Kontrolu',
                 'file': 'tests.test_qa_page',
-                'method': 'test_lever_redirect',
+                'method': 'test_qa_jobs_page',
                 'priority': 3
             }
         ]
@@ -249,7 +249,7 @@ class TestController:
             response = requests.post(
                 f"{service_url}/session",
                 json={"capabilities": {"alwaysMatch": capabilities}},
-                timeout=30
+                timeout=180
             )
             
             if response.status_code in [200, 201]:
