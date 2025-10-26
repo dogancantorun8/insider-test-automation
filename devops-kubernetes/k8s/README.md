@@ -1,235 +1,190 @@
-# Kubernetes Deployment Guide
+# Kubernetes Manifests
 
-This folder contains all YAML manifest files required to run Selenium test automation in Kubernetes.
+This folder contains YAML manifests to deploy Selenium test automation on Kubernetes.
 
-## File Structure
+## Files
 
 ```
 k8s/
 ├── namespace.yaml                  # test-automation namespace
 ├── rbac.yaml                       # ServiceAccount, Role, RoleBinding
 ├── configmap.yaml                  # Test configuration
-├── chrome-node-service.yaml        # Chrome Node ClusterIP Service
+├── chrome-node-service.yaml        # Chrome Node Service (ClusterIP)
 ├── chrome-node-deployment.yaml     # Chrome Node Deployment (1-5 replicas)
 ├── controller-deployment.yaml      # Test Controller Deployment (deprecated)
-└── controller-job.yaml             # Test Controller Job (recommended - no CrashLoopBackOff)
+└── controller-job.yaml             # Test Controller Job (recommended)
 ```
 
 ## Components
 
-### 1. Namespace
-- **File:** `namespace.yaml`
-- **Namespace:** `test-automation`
-- All resources are created within this namespace
+**Namespace**
+- File: `namespace.yaml`
+- Creates `test-automation` namespace for all resources
 
-### 2. RBAC (Role-Based Access Control)
-- **File:** `rbac.yaml`
-- **ServiceAccount:** `test-controller-sa`
-- **Permissions:**
-  - Read, list, watch Pods
-  - Read, update, scale Deployments
-  - Access Pod logs
+**RBAC**
+- File: `rbac.yaml`
+- ServiceAccount: `test-controller-sa`
+- Permissions: Read/list/watch Pods, Read/update Deployments, Access Pod logs
 
-### 3. ConfigMap
-- **File:** `configmap.yaml`
-- Contains test URLs and configurations
-- Environment variables
+**ConfigMap**
+- File: `configmap.yaml`
+- Contains test URLs and environment variables
 
-### 4. Chrome Node Service
-- **File:** `chrome-node-service.yaml`
-- **Type:** ClusterIP
-- **Ports:**
-  - `4444`: Selenium WebDriver
+**Chrome Node Service**
+- File: `chrome-node-service.yaml`
+- Type: ClusterIP
+- Port: 4444 (Selenium WebDriver)
+- Load balances across Chrome Node Pods
 
-### 5. Chrome Node Deployment
-- **File:** `chrome-node-deployment.yaml`
-- **Image:** `selenium/standalone-chrome:latest` (recommended)
-  - Pre-built Selenium image, no build required
-  - Headless Chrome pre-installed
-  - ChromeDriver pre-installed
-- **Custom Image (Optional):** `../chrome-node/Dockerfile.chrome`
-  - Use if custom configuration is needed
-- **Replicas:** 1 (default), max 5
-- **Resources:**
-  - Memory: 256Mi request, 512Mi limit (optimized for t2.small)
-  - CPU: 250m request, 500m limit
-- **Ports:**
-  - 4444: Selenium WebDriver
-- **Environment Variables:**
-  - `SE_NODE_MAX_SESSIONS`: "1"
-  - `SE_NODE_SESSION_TIMEOUT`: "300"
-  - `SE_SCREEN_WIDTH`: "1920"
-  - `SE_SCREEN_HEIGHT`: "1080"
-- **Probes:**
-  - Readiness probe: `/wd/hub/status`
-  - Liveness probe: `/wd/hub/status`
+**Chrome Node Deployment**
+- File: `chrome-node-deployment.yaml`
+- Image: `selenium/standalone-chrome:latest` (official Selenium image)
+- Replicas: 1-5 (configurable)
+- Resources: 256Mi-512Mi memory, 250m-500m CPU
+- Includes readiness and liveness probes
 
-### 6. Test Controller Job (Recommended)
-- **File:** `controller-job.yaml`
-- **Type:** Kubernetes Job (runs once, completes)
-- **Image:** `dogancan4040/insider-test-controller:latest`
-- **RestartPolicy:** Never (no CrashLoopBackOff problem)
-- **TTL:** 3600s (auto-cleanup after 1 hour)
-- **BackoffLimit:** 3 (retries 3 times on failure)
-- **Resources:**
-  - Memory: 256Mi request, 512Mi limit
-  - CPU: 200m request, 500m limit
-- **Features:**
-  - Automatically reads deployment replica count
-  - Waits for all Chrome nodes to be ready
-  - 10 second Selenium stabilization wait
-  - Stays in Completed state after test (no restart)
+**Test Controller Job**
+- File: `controller-job.yaml`
+- Image: `dogancan4040/insider-test-controller:latest`
+- Type: Kubernetes Job (runs once, no restarts)
+- TTL: 3600s (auto-cleanup after 1 hour)
+- BackoffLimit: 3 retries on failure
+- Avoids CrashLoopBackOff issues
 
-### 6b. Test Controller Deployment (Deprecated)
-- **File:** `controller-deployment.yaml`
-- **Status:** Not used (CrashLoopBackOff issue)
-- **Recommended:** Use `controller-job.yaml`
+**Test Controller Deployment** (deprecated)
+- File: `controller-deployment.yaml`
+- Not recommended due to CrashLoopBackOff after job completion
+- Use controller-job.yaml instead
 
-## Deployment
+## Quick Start
 
-### Option 1: Python Script (Recommended)
+**Using Python Script (Recommended)**
 
 ```bash
-# Deploy with 1 Chrome Node
-python deploy_k8s.py --node-count 1
+# Deploy with 2 Chrome Nodes
+python deploy_k8s.py --node-count 2
 
-# Deploy with 3 Chrome Nodes
-python deploy_k8s.py --node-count 3
-
-# Status check
+# Check status
 python deploy_k8s.py --status
 
 # Cleanup
 python deploy_k8s.py --cleanup
 ```
 
-### Option 2: Manual Kubectl
+**Using kubectl**
 
 ```bash
-# 1. Create namespace
+# Apply all manifests in order
 kubectl apply -f k8s/namespace.yaml
-
-# 2. Setup RBAC
 kubectl apply -f k8s/rbac.yaml
-
-# 3. Create ConfigMap
 kubectl apply -f k8s/configmap.yaml
-
-# 4. Create Chrome Node Service
 kubectl apply -f k8s/chrome-node-service.yaml
-
-# 5. Chrome Node deployment
 kubectl apply -f k8s/chrome-node-deployment.yaml
+kubectl apply -f k8s/controller-job.yaml
 
-# 6. Test Controller deployment
-kubectl apply -f k8s/controller-deployment.yaml
-
-# 7. Check pod status
+# Check pod status
 kubectl get pods -n test-automation -o wide
 
-# 8. Scale Chrome Nodes (example: 3 replicas)
+# Scale Chrome Nodes
 kubectl scale deployment chrome-node -n test-automation --replicas=3
 ```
 
 ## Monitoring
 
-### Pod Status
+**Pod Status**
 ```bash
 kubectl get pods -n test-automation -o wide
 ```
 
-### Pod Logs
+**View Logs**
 ```bash
 # Controller logs
-kubectl logs -f deployment/test-controller -n test-automation
+kubectl logs -f -n test-automation -l app=test-controller
 
 # Chrome Node logs
-kubectl logs -f deployment/chrome-node -n test-automation
+kubectl logs -f -n test-automation -l app=chrome-node
 
-# Specific pod logs
+# Specific pod
 kubectl logs -f <pod-name> -n test-automation
 ```
 
-### Pod Description
+**Pod Details**
 ```bash
 kubectl describe pod <pod-name> -n test-automation
 ```
 
-### Service Status
+**Service & Endpoints**
 ```bash
-kubectl get services -n test-automation
+kubectl get svc -n test-automation
+kubectl get endpoints chrome-node-service -n test-automation
 ```
 
-### Events
+**Cluster Events**
 ```bash
 kubectl get events -n test-automation --sort-by='.lastTimestamp'
 ```
 
 ## Troubleshooting
 
-### Pod in Pending State
+**Pod stuck in Pending**
 ```bash
-# Check pod details
 kubectl describe pod <pod-name> -n test-automation
-
-# Check node resources
 kubectl top nodes
-kubectl describe nodes
 ```
+Check for insufficient resources or scheduling issues.
 
-### ImagePullBackOff Error
+**ImagePullBackOff**
 ```bash
-# Check if image was pushed to Docker Hub
-# Update image name in controller-deployment.yaml
+kubectl describe pod <pod-name> -n test-automation
 ```
+Verify the image exists in Docker Hub and the name is correct in the YAML file.
 
-### CrashLoopBackOff
+**CrashLoopBackOff**
 ```bash
-# Check pod logs
 kubectl logs <pod-name> -n test-automation --previous
-
-# Enter pod
-kubectl exec -it <pod-name> -n test-automation -- /bin/bash
 ```
+Use controller-job.yaml instead of controller-deployment.yaml to avoid this.
 
-### Service Connection Issues
+**Service not reachable**
 ```bash
-# Check service endpoints
 kubectl get endpoints chrome-node-service -n test-automation
+kubectl exec -it <pod> -n test-automation -- curl http://chrome-node-service:4444/wd/hub/status
+```
+Ensure Chrome Node Pods are running and the Service has endpoints.
 
-# DNS test
-kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup chrome-node-service.test-automation.svc.cluster.local
+**DNS issues**
+```bash
+kubectl run -it --rm debug --image=busybox --restart=Never -n test-automation -- nslookup chrome-node-service
 ```
 
 ## Cleanup
 
-### Delete all resources
+**Remove all resources**
 ```bash
-# With Python script
+# Using Python script
 python deploy_k8s.py --cleanup
 
-# Or manually
+# Or manually delete namespace
 kubectl delete namespace test-automation
 ```
 
-### Delete only deployments
+**Delete specific resources**
 ```bash
-kubectl delete deployment --all -n test-automation
+kubectl delete deployment chrome-node -n test-automation
+kubectl delete job test-controller-job -n test-automation
 ```
 
-## Notes
+## Important Notes
 
-1. **Image Name:** Update your Docker Hub username in `controller-deployment.yaml`
-2. **Resources:** Pod resource limits can be adjusted based on your cluster
-3. **Scaling:** Chrome Nodes can be scaled between 1-5
-4. **Free Tier:** AWS EKS is not free tier, calculate costs
-5. **Cleanup:** Always cleanup after tests
+1. Update Docker Hub username in `controller-job.yaml` if using your own image
+2. Resource limits can be adjusted based on cluster capacity
+3. Chrome Nodes can scale from 1 to 5 replicas
+4. Always cleanup resources after testing to avoid costs
+5. Use controller-job.yaml instead of controller-deployment.yaml
 
-## Related Files
+## Related Documentation
 
-- `../deploy_k8s.py` - Deployment script
-- `../devops-k8s-controller/controller.py` - Test Controller code
-- `../test-main.py` - Local test runner (development)
-- `../tests/` - Test cases
-- `../test_core/` - Test framework (Base class)
-- `../test_config/` - Test configuration
+- `../deploy_k8s.py` - Automated deployment script
+- `../devops-k8s-controller/controller.py` - Test Controller implementation
+- `../devops-k8s-controller/README.md` - Controller documentation
+- Main project README for complete setup guide

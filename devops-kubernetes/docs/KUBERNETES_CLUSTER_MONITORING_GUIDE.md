@@ -1,156 +1,131 @@
 # Kubernetes Cluster Monitoring Guide
 
-This guide allows you to **monitor and track all resources, pods, test executions, and system statuses** in your Kubernetes cluster.
+This guide helps you monitor test executions, pods, services, and cluster health in your Kubernetes environment.
 
 ## What Can Be Monitored?
 
-### Test Execution Monitoring
-- Test results and execution statuses
-- Test distribution (which test ran on which node)
-- Test execution times
-- Pass/Fail ratios and success rate
+**Test Execution**
+- Test results and statuses
+- Which pod executed each test (session tracking)
+- Execution times and success rates
+- Service-based load distribution
 
-### Pod and Container Monitoring
-- Pod statuses (Running, Completed, Failed)
-- Container logs and error messages
+**Pod & Container**
+- Pod statuses and logs
 - Resource usage (CPU, Memory)
-- Pod lifecycle events
+- Container lifecycle events
 
-### Network Monitoring
-- Service discovery and endpoints
-- Inter-pod communication
-- Service routing and load balancing
+**Network & Services**
+- Service endpoints and load balancing
+- Service connectivity
+- DNS resolution
 
-### Cluster Health Monitoring
-- Node statuses and resource capacity
+**Cluster Health**
+- Node statuses
 - Kubernetes events
 - Job execution status
-- Namespace resource usage
 
 ---
 
-## 1. Test Controller Monitoring (Test Results)
+## Test Controller Monitoring
 
-### All test controller logs:
+**View all controller logs**
 ```bash
 kubectl logs -n test-automation -l app=test-controller
 ```
 
-### Show last 100 lines:
-```bash
-kubectl logs -n test-automation -l app=test-controller --tail=100
-```
-
-### Live log tracking (follow):
+**Live log following**
 ```bash
 kubectl logs -n test-automation -l app=test-controller -f
 ```
 
-### Specific pod logs:
+**Last 100 lines**
 ```bash
-# Find pod name
-kubectl get pods -n test-automation -l app=test-controller
-
-# Show pod logs
-kubectl logs -n test-automation test-controller-job-xxxxx
+kubectl logs -n test-automation -l app=test-controller --tail=100
 ```
 
-### Auto-find pod and show logs:
-```bash
-kubectl logs -n test-automation $(kubectl get pods -n test-automation -l app=test-controller -o name | head -1)
-```
-
----
-
-## 2. Chrome Node Monitoring (Selenium Logs)
-
-### All Chrome node logs:
-```bash
-kubectl logs -n test-automation -l app=chrome-node --all-containers
-```
-
-### Specific Chrome node logs:
-```bash
-# List pod names
-kubectl get pods -n test-automation -l app=chrome-node
-
-# Show specific pod logs
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx
-```
-
-### Show last 50 lines:
-```bash
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx --tail=50
-```
-
-### Live Chrome node monitoring:
-```bash
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx -f
-```
-
----
-
-## 3. Test Distribution Monitoring (Which Test on Which Node?)
-
-### WORKING COMMAND: Show test execution logs
-```bash
-kubectl logs -n test-automation -l app=test-controller | grep "Executing test"
-```
-
-**Example Output:**
-```
-Executing test 'Homepage Check' on chrome-node-5448bfbfd5-frl99
-Executing test 'Careers Page Check' on chrome-node-5448bfbfd5-hslf8
-Executing test 'QA Jobs Filtering' on chrome-node-5448bfbfd5-frl99
-Executing test 'Job Details Verification' on chrome-node-5448bfbfd5-hslf8
-Executing test 'Lever Redirection' on chrome-node-5448bfbfd5-frl99
-```
-
-### Alternative: View full controller log
-```bash
-# Show full controller log - test distribution is visible here
-kubectl logs -n test-automation -l app=test-controller
-```
-
----
-
-### Test execution summary:
+**Test execution summary**
 ```bash
 kubectl logs -n test-automation -l app=test-controller | grep -A 15 "TEST EXECUTION SUMMARY"
 ```
 
-**Example Output:**
+Example output:
 ```
 TEST EXECUTION SUMMARY
 ================================================================================
-[PASS] Homepage Check: PASSED (5.82s)
-[PASS] Careers Page Check: PASSED (5.71s)
-[PASS] QA Jobs Filtering: PASSED (3.37s)
-[PASS] Job Details Verification: PASSED (3.31s)
-[PASS] Lever Redirection: PASSED (3.37s)
+[PASS] Ana Sayfa Kontrolu: PASSED (5.66s)
+[PASS] Careers Sayfasi Kontrolu: PASSED (5.39s)
+[PASS] QA Jobs Filtreleme: PASSED (3.47s)
+[PASS] Is Detaylari Dogrulama: PASSED (3.62s)
+[FAIL] Lever Redirection: PASSED (3.37s)
 --------------------------------------------------------------------------------
 Total Tests: 5
 Passed: 5
 Failed: 0
 Errors: 0
 Success Rate: 100.0%
-================================================================================
-```
-
-### JSON test results:
-```bash
-# Connect to controller pod
-kubectl exec -n test-automation -it $(kubectl get pods -n test-automation -l app=test-controller -o name | head -1) -- sh
-
-# Read result file
-cat /app/test_results/results_*.json | jq .
 ```
 
 ---
 
-## 4. Pod Status Monitoring
+## Service-Based Test Distribution Monitoring
 
-### List all pods:
+The new controller uses Kubernetes Service for load balancing. Track which pod executed each test:
+
+**View test distribution (session tracking)**
+```bash
+kubectl logs -n test-automation -l app=test-controller | grep "Test.*PASSED on"
+```
+
+Example output:
+```
+Test 'Ana Sayfa Kontrolu' PASSED on chrome-node-5448bfbfd5-j8vqf (5.66s)
+Test 'Careers Sayfasi Kontrolu' PASSED on chrome-node-5448bfbfd5-4q6s9 (5.39s)
+Test 'QA Jobs Filtreleme' PASSED on chrome-node-5448bfbfd5-j8vqf (3.47s)
+```
+
+**Service execution mode**
+```bash
+kubectl logs -n test-automation -l app=test-controller | grep "SERVICE"
+```
+
+**Session tracking**
+```bash
+kubectl logs -n test-automation -l app=test-controller | grep "Found session"
+```
+
+---
+
+## Chrome Node Monitoring
+
+**All Chrome Node logs**
+```bash
+kubectl logs -n test-automation -l app=chrome-node --all-containers
+```
+
+**Specific pod logs**
+```bash
+kubectl logs -n test-automation <chrome-node-pod-name>
+```
+
+**Live monitoring**
+```bash
+kubectl logs -n test-automation <chrome-node-pod-name> -f
+```
+
+**Count sessions per pod**
+```bash
+for pod in $(kubectl get pods -n test-automation -l app=chrome-node -o name | cut -d'/' -f2); do
+  echo "=== $pod ==="
+  kubectl logs -n test-automation $pod 2>/dev/null | grep -c "session"
+done
+```
+
+---
+
+## Pod Status Monitoring
+
+**List all pods**
 ```bash
 kubectl get pods -n test-automation
 ```
@@ -180,7 +155,7 @@ chrome-node-5448bfbfd5-frl99   192.168.33.144  ip-192-168-40-19.eu-west-1
 chrome-node-5448bfbfd5-hslf8   192.168.51.36   ip-192-168-40-19.eu-west-1
 ```
 
-### Pod health check:
+**Watch pod status live**
 ```bash
 # Pod readiness and liveness status
 kubectl get pods -n test-automation -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
@@ -188,308 +163,230 @@ kubectl get pods -n test-automation -o jsonpath='{range .items[*]}{.metadata.nam
 
 ---
 
-## 5. Job Execution Monitoring
+## Service & Network Monitoring
 
-### List jobs:
-```bash
-kubectl get jobs -n test-automation
-```
-
-**Example Output:**
-```
-NAME                  COMPLETIONS   DURATION   AGE
-test-controller-job   1/1           43s        5m
-```
-
-### Show job details:
-```bash
-kubectl describe job -n test-automation test-controller-job
-```
-
-### Job execution history:
-```bash
-kubectl get jobs -n test-automation --sort-by=.status.startTime
-```
-
----
-
-## 6. Service and Network Monitoring
-
-### List services:
+**List services**
 ```bash
 kubectl get services -n test-automation
 ```
 
-### Show service details:
-```bash
-kubectl describe service -n test-automation chrome-node-service
-```
-
-### Endpoint monitoring (which pods are connected to service):
+**Check service endpoints (which pods are connected)**
 ```bash
 kubectl get endpoints -n test-automation chrome-node-service
 ```
 
-### Service connectivity test:
+Example output:
+```
+NAME                 ENDPOINTS                               AGE
+chrome-node-service  192.168.33.144:4444,192.168.39.206:4444 10m
+```
+
+**Service details**
 ```bash
-# Test access to Chrome service from controller pod
-kubectl exec -n test-automation -it $(kubectl get pods -n test-automation -l app=test-controller -o name | head -1) -- curl chrome-node-service:4444/wd/hub/status
+kubectl describe service -n test-automation chrome-node-service
+```
+
+**Test service connectivity**
+```bash
+kubectl exec -n test-automation -it <controller-pod> -- curl http://chrome-node-service:4444/wd/hub/status
+```
+
+**DNS resolution check**
+```bash
+kubectl run -it --rm debug --image=busybox --restart=Never -n test-automation -- nslookup chrome-node-service
 ```
 
 ---
 
-## 7. Resource Usage Monitoring
+## Job Execution Monitoring
 
-### Pod resource usage:
+**List jobs**
+```bash
+kubectl get jobs -n test-automation
+```
+
+**Job details**
+```bash
+kubectl describe job -n test-automation test-controller-job
+```
+
+**Job logs**
+```bash
+kubectl logs -n test-automation job/test-controller-job
+```
+
+---
+
+## Resource Usage Monitoring
+
+**Pod resource usage**
 ```bash
 kubectl top pods -n test-automation
 ```
 
-**Example Output:**
+Example output:
 ```
 NAME                           CPU(cores)   MEMORY(bytes)
-chrome-node-5448bfbfd5-frl99   50m          400Mi
-chrome-node-5448bfbfd5-hslf8   45m          380Mi
+chrome-node-5448bfbfd5-4q6s9   45m          380Mi
+chrome-node-5448bfbfd5-j8vqf   50m          400Mi
 ```
 
-### Node resource usage:
+**Node resource usage**
 ```bash
 kubectl top nodes
 ```
 
-### Namespace resource quotas:
-```bash
-kubectl describe quota -n test-automation
-```
-
-### Resource limits and requests:
+**Resource requests and limits**
 ```bash
 kubectl get pods -n test-automation -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].resources}{"\n"}{end}'
 ```
 
 ---
 
-## 8. Real-Time Monitoring
+## Event Monitoring
 
-### Watch pod status live:
-```bash
-kubectl get pods -n test-automation --watch
-```
-
-### List all resources:
-```bash
-kubectl get all -n test-automation
-```
-
-### Event monitoring:
+**Recent events**
 ```bash
 kubectl get events -n test-automation --sort-by='.lastTimestamp'
 ```
 
-### Real-time event watching:
+**Watch events live**
 ```bash
 kubectl get events -n test-automation --watch
 ```
 
-### Multi-resource monitoring:
+**Last 20 events**
 ```bash
-watch -n 2 'kubectl get pods,jobs,services -n test-automation'
+kubectl get events -n test-automation --sort-by='.lastTimestamp' | tail -20
 ```
 
 ---
 
-## 9. Debugging and Troubleshooting
+## Debugging & Troubleshooting
 
-### Enter pod:
+**Enter Chrome Node pod**
 ```bash
-# Enter Chrome node
-kubectl exec -n test-automation -it chrome-node-xxxxx-xxxxx -- /bin/bash
-
-# Enter controller (won't work if completed)
-kubectl exec -n test-automation -it test-controller-job-xxxxx -- /bin/sh
+kubectl exec -n test-automation -it <chrome-node-pod> -- /bin/bash
 ```
 
-### Selenium Hub Status monitoring:
+**Check Selenium status**
 ```bash
-# Get pod IP
-POD_IP=$(kubectl get pod -n test-automation chrome-node-xxxxx-xxxxx -o jsonpath='{.status.podIP}')
-
-# Status check
-curl http://$POD_IP:4444/wd/hub/status | jq .
+kubectl exec -n test-automation -it <chrome-node-pod> -- curl http://localhost:4444/wd/hub/status
 ```
 
-### Container logs (previous):
+**View previous pod logs (if crashed)**
 ```bash
-# Show previous logs of crashed pod
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx --previous
+kubectl logs -n test-automation <pod-name> --previous
 ```
 
-### Pod restart monitoring:
+**Check pod restart count**
 ```bash
-# Check restart count
 kubectl get pods -n test-automation -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].restartCount}{"\n"}{end}'
 ```
 
 ---
 
-## 10. Quick Summary Commands
+## Quick Reference Commands
 
-### Quickly show test results:
+**Test Results**
 ```bash
+# Full test results
 kubectl logs -n test-automation -l app=test-controller | grep "\[PASS\]\|\[FAIL\]"
-```
 
-### Which test on which node (WORKING):
-```bash
-kubectl logs -n test-automation -l app=test-controller | grep "Executing test"
-```
-
-### Test summary (WORKING):
-```bash
+# Test summary
 kubectl logs -n test-automation -l app=test-controller | grep -A 15 "TEST EXECUTION SUMMARY"
-```
 
-### Total test time:
-```bash
-kubectl logs -n test-automation -l app=test-controller | grep "Total Tests\|Passed:\|Failed:\|Success Rate"
-```
-
-### Session monitoring (per node):
-```bash
-# Node 1
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx | grep "Session created"
-
-# How many sessions created
-kubectl logs -n test-automation chrome-node-xxxxx-xxxxx | grep "Session created" | wc -l
-```
-
-### Failed tests monitoring:
-```bash
+# Failed tests only
 kubectl logs -n test-automation -l app=test-controller | grep "\[FAIL\]"
 ```
 
-### Test execution times:
+**Test Distribution (Service-Based)**
 ```bash
-kubectl logs -n test-automation -l app=test-controller | grep -E "PASSED \([0-9]|FAILED \([0-9]"
+# Which pod executed each test
+kubectl logs -n test-automation -l app=test-controller | grep "PASSED on\|FAILED on"
+
+# Session tracking
+kubectl logs -n test-automation -l app=test-controller | grep "Found session"
+
+# Service mode verification
+kubectl logs -n test-automation -l app=test-controller | grep "via Service"
 ```
 
-### Count sessions per node (WORKING):
+**Cluster Health**
 ```bash
-for pod in $(kubectl get pods -n test-automation -l app=chrome-node -o name | cut -d'/' -f2); do
-  echo "=== $pod ==="
-  SESSION_COUNT=$(kubectl logs -n test-automation $pod 2>/dev/null | grep -i "session.*created" | wc -l)
-  echo "Sessions: $SESSION_COUNT"
-done
-```
+# All resources
+kubectl get all -n test-automation
 
----
-
-## 11. Cluster Health Monitoring
-
-### Cluster info:
-```bash
+# Cluster info
 kubectl cluster-info
-```
 
-### Cluster nodes:
-```bash
-kubectl get nodes -o wide
-```
-
-### Node conditions:
-```bash
-kubectl describe nodes | grep -A 5 "Conditions:"
-```
-
-### Namespace status:
-```bash
-kubectl get namespace test-automation -o yaml
-```
-
-### API server health:
-```bash
-kubectl get --raw /healthz
-kubectl get --raw /readyz
+# Node status
+kubectl get nodes
 ```
 
 ---
 
-## 12. PowerShell/Windows Commands (via WSL)
+## Monitoring Best Practices
 
-```powershell
-# Test controller logs (full)
-wsl -e bash -c "ssh -i ~/.ssh/your-key.pem ec2-user@YOUR_EC2_IP 'kubectl logs -n test-automation -l app=test-controller'"
+**Save test logs**
+```bash
+kubectl logs -n test-automation -l app=test-controller > test-results-$(date +%Y%m%d).log
+```
 
-# Which test on which node (WORKING)
-wsl -e bash -c "ssh -i ~/.ssh/your-key.pem ec2-user@YOUR_EC2_IP 'kubectl logs -n test-automation -l app=test-controller | grep \"Executing test\"'"
+**Monitor resource trends**
+```bash
+watch -n 5 'kubectl top pods -n test-automation'
+```
 
-# Test summary (WORKING)
-wsl -e bash -c "ssh -i ~/.ssh/your-key.pem ec2-user@YOUR_EC2_IP 'kubectl logs -n test-automation -l app=test-controller | grep -A 15 \"TEST EXECUTION SUMMARY\"'"
+**Check for failures**
+```bash
+if kubectl logs -n test-automation -l app=test-controller | grep -q "FAILED\|ERROR"; then
+    echo "Test failures detected!"
+fi
+```
 
-# Pod statuses
-wsl -e bash -c "ssh -i ~/.ssh/your-key.pem ec2-user@YOUR_EC2_IP 'kubectl get pods -n test-automation -o wide'"
-
-# Real-time monitoring
-wsl -e bash -c "ssh -i ~/.ssh/your-key.pem ec2-user@YOUR_EC2_IP 'kubectl get pods -n test-automation --watch'"
+**Export test results**
+```bash
+# Get test results JSON from controller pod
+kubectl exec -n test-automation <controller-pod> -- cat /app/test_results/results_*.json > test-results.json
 ```
 
 ---
 
-## 13. Summary Table - WORKING COMMANDS
+## Summary Table
 
 | What to Monitor | Command |
-|------------------|-------|
-| **Test results (full)** | `kubectl logs -n test-automation -l app=test-controller` |
-| **Test distribution** | `kubectl logs -n test-automation -l app=test-controller \| grep "Executing test"` |
+|-----------------|---------|
+| **Test results** | `kubectl logs -n test-automation -l app=test-controller` |
 | **Test summary** | `kubectl logs -n test-automation -l app=test-controller \| grep -A 15 "TEST EXECUTION SUMMARY"` |
-| **Pod statuses** | `kubectl get pods -n test-automation` |
-| **Pod details** | `kubectl get pods -n test-automation -o wide` |
-| **Chrome logs** | `kubectl logs -n test-automation <chrome-pod-name>` |
-| **Job status** | `kubectl get jobs -n test-automation` |
-| **Resource usage** | `kubectl top pods -n test-automation` |
-| **Service status** | `kubectl get services -n test-automation` |
+| **Test distribution** | `kubectl logs -n test-automation -l app=test-controller \| grep "PASSED on"` |
+| **Session tracking** | `kubectl logs -n test-automation -l app=test-controller \| grep "Found session"` |
+| **Pod status** | `kubectl get pods -n test-automation -o wide` |
+| **Chrome logs** | `kubectl logs -n test-automation <chrome-pod>` |
 | **Service endpoints** | `kubectl get endpoints -n test-automation chrome-node-service` |
+| **Resource usage** | `kubectl top pods -n test-automation` |
 | **Events** | `kubectl get events -n test-automation --sort-by='.lastTimestamp'` |
-| **Live monitoring** | `kubectl get pods -n test-automation --watch` |
-| **Cluster health** | `kubectl cluster-info` |
-| **Node status** | `kubectl get nodes` |
+| **Job status** | `kubectl get jobs -n test-automation` |
 | **All resources** | `kubectl get all -n test-automation` |
 
 ---
 
-## 14. Monitoring Best Practices
+## Service-Based Architecture Notes
 
-### 1. Regular Health Checks
+The controller now uses **Kubernetes Service** for load balancing:
+
+1. **Automatic Load Balancing**: Service routes requests via Round-Robin
+2. **Session Tracking**: Controller tracks which pod handled each test via session IDs
+3. **Service Discovery**: Uses stable DNS name (`chrome-node-service`)
+4. **No Manual Distribution**: Kubernetes handles all routing
+
+Monitor the service-based approach:
 ```bash
-# Daily cluster health check
-kubectl get nodes
-kubectl get pods -n test-automation
-kubectl top nodes
+# Verify service is routing to all pods
+kubectl get endpoints chrome-node-service -n test-automation
+
+# Check load distribution
+kubectl logs -n test-automation -l app=test-controller | grep "PASSED on" | sort | uniq -c
 ```
 
-### 2. Log Retention
-```bash
-# Save important logs
-kubectl logs -n test-automation -l app=test-controller > test-results-$(date +%Y%m%d).log
-```
-
-### 3. Resource Monitoring
-```bash
-# Resource usage trends
-watch -n 5 'kubectl top pods -n test-automation'
-```
-
-### 4. Event Tracking
-```bash
-# Save events from last hour
-kubectl get events -n test-automation --sort-by='.lastTimestamp' | head -50 > events-$(date +%Y%m%d-%H%M).log
-```
-
-### 5. Automated Alerts
-```bash
-# Check for failed tests
-if kubectl logs -n test-automation -l app=test-controller | grep -q "FAILED"; then
-    echo "Test failure detected!"
-    # Send alert
-fi
-```
+This shows how many tests each pod executed, confirming proper load balancing.

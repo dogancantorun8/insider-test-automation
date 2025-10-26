@@ -1,191 +1,156 @@
-# DevOps - Kubernetes Controller
+# Test Controller - Kubernetes
 
-This folder contains the necessary files for the **Controller Pod that manages test automation in a Kubernetes environment**.
+This folder contains the Controller Pod that manages test automation in the Kubernetes environment.
 
-## Contents
+## Files
 
 ```
 devops-k8s-controller/
-├── controller.py              # Test Controller - Main logic
-├── Dockerfile.controller      # Dockerfile for Docker image
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
+├── controller.py              # Test Controller (Service-based)
+├── Dockerfile.controller      # Docker image
+├── requirements.txt           # Python dependencies 
 ```
 
-## What Does It Do?
+## What It Does
 
-### `controller.py`
-Runs inside the Test Controller Pod and does the following:
-- Finds Chrome Node Pods from Kubernetes API
-- Checks if Selenium Grid is ready
-- Loads test cases
-- Distributes tests to Chrome Nodes (with Round-Robin algorithm)
-- Executes tests
-- Collects and reports results
-- Provides health check endpoint (Flask)
+The Controller Pod handles:
+- Finding Chrome Node Pods using Kubernetes API
+- Checking if the Service is ready
+- Loading and executing test cases
+- Distributing tests through Kubernetes Service (automatic load balancing)
+- Tracking which pod runs each test (using session IDs)
+- Collecting and reporting results
+- Providing health check endpoints (`/health`, `/results`)
 
-### `Dockerfile.controller`
-Creates Docker image for Test Controller:
-- Python 3.9 slim base image
-- Kubernetes Python client
-- Test files and dependencies
-- Health check endpoint (port 8080)
+## Key Features
 
-## Docker Image Build
+- **Service-Based**: Uses Kubernetes Service for automatic load balancing
+- **Session Tracking**: Shows which pod executed each test
+- **Auto Retry**: Automatically retries on failures using `tenacity`
+- **Health Monitoring**: Flask endpoints for status checks
+- **Dynamic Scaling**: Detects replica count automatically
+
+## Docker Build & Push
 
 ```bash
-# Build
+# Build the image
 docker build -f devops-k8s-controller/Dockerfile.controller -t insider-test-controller:latest .
 
 # Tag for Docker Hub
 docker tag insider-test-controller:latest YOUR_USERNAME/insider-test-controller:latest
 
-# Push
+# Push to registry
 docker push YOUR_USERNAME/insider-test-controller:latest
 ```
 
 ## Environment Variables
 
-Controller Pod uses these environment variables:
+The Controller Pod uses these environment variables:
 
 ```bash
 NAMESPACE=test-automation                    # Kubernetes namespace
-CHROME_NODE_SERVICE=chrome-node-service      # Chrome Node service name
+CHROME_NODE_SERVICE=chrome-node-service      # Service name
 CHROME_NODE_PORT=4444                        # Selenium port
 BASE_URL=https://useinsider.com             # Test URL
-LOG_LEVEL=INFO                              # Log level
+LOG_LEVEL=INFO                              # Logging level
 ```
 
 ## Test Execution Flow
 
 ```
-1. Controller Pod starts
-   ↓
-2. Lists Chrome Node Pods from Kubernetes API
-   ↓
-3. Checks if Selenium is ready on each Chrome Node
-   ↓
-4. Loads test cases from get_test_cases() method
-   ↓
-5. Distributes tests to Chrome Nodes with distribute_tests()
-   ↓
-6. Executes each test with execute_test_on_node()
-   ↓
-7. Collects test results
-   ↓
-8. Creates summary report
-   ↓
-9. Saves results to JSON file
+1. Controller starts and launches Flask server on port 8080
+2. Waits for Chrome Node Pods to be ready
+3. Checks Chrome Node Service health
+4. Loads test cases
+5. For each test:
+   - Creates Selenium session via Service URL
+   - Service routes request to available Chrome Node
+   - Finds which pod executed the test from logs
+   - Collects test result
+6. Generates summary report
+7. Saves results to JSON file (/app/test_results/)
 ```
 
-## Controller API Endpoints
+## API Endpoints
 
-Controller Pod provides health check endpoints with Flask:
-
-### Health Check
+**Health Check**
 ```bash
 GET /health
-
-Response:
-{
-  "status": "healthy",
-  "timestamp": "2025-01-01T12:00:00"
-}
+# Response: {"status": "healthy", "timestamp": "..."}
 ```
 
-### Test Results
+**Test Results**
 ```bash
 GET /results
+# Response: {"results": [...]}
+```
 
-Response:
+## Adding New Tests
+
+Edit the `get_test_cases()` method in `controller.py`:
+
+```python
 {
-  "results": [
-    {
-      "test_id": "test_1",
-      "test_name": "Homepage Check",
-      "status": "PASSED",
-      "execution_time": 3.45
-    }
-  ]
+    'id': 'test_new',
+    'name': 'New Test Name',
+    'file': 'tests.test_module',
+    'method': 'test_method_name',
+    'priority': 1
 }
 ```
 
-## Adding Test Cases
+## RBAC Permissions
 
-To add a new test case, edit the `get_test_cases()` method in `controller.py`:
-
-```python
-def get_test_cases(self) -> List[Dict[str, Any]]:
-    test_cases = [
-        {
-            'id': 'test_1',
-            'name': 'Homepage Check',
-            'file': 'tests.test_home_page',
-            'method': 'test_home_page',
-            'priority': 1
-        },
-        # Add new test
-        {
-            'id': 'test_new',
-            'name': 'New Test',
-            'file': 'tests.test_new',
-            'method': 'test_new_method',
-            'priority': 2
-        }
-    ]
-    return test_cases
-```
-
-## Kubernetes Integration
-
-Controller Pod uses Kubernetes API to:
-- List Pods: `list_namespaced_pod()`
-- Scale Deployments: `patch_namespaced_deployment()`
-- Get Pod IPs: `pod.status.pod_ip`
-- Service discovery: Access Chrome Node Service via DNS
-
-### RBAC Permissions
-Controller Pod has these permissions (rbac.yaml):
-- Read, list Pods
-- Read, update Deployments
-- Read Services
-- Access Pod logs
+The Controller Pod requires these permissions (defined in `rbac.yaml`):
+- Pods: Read, List
+- Deployments: Read
+- Services: Read
+- Pod Logs: Read (required for session tracking)
 
 ## Dependencies
 
 ```
-kubernetes>=28.1.0          # Kubernetes Python client
+kubernetes>=28.1.0          # Kubernetes API client
 requests>=2.31.0            # HTTP requests
-selenium>=4.25.0            # Selenium WebDriver
-flask>=3.0.0                # Health check endpoint
-python-dotenv>=1.0.0        # Environment variables
-colorlog>=6.8.0             # Colored logging
+selenium>=4.25.0            # WebDriver
+flask>=3.0.0                # Health endpoints
 tenacity>=8.2.3             # Retry logic
 ```
 
 ## Troubleshooting
 
-### Controller Pod not starting
+**Controller not starting**
 ```bash
-# Check logs
-kubectl logs -f deployment/test-controller -n test-automation
-
-# Pod details
-kubectl describe pod <controller-pod-name> -n test-automation
+kubectl logs -f -n test-automation -l app=test-controller
+kubectl describe job test-controller-job -n test-automation
 ```
 
-### Chrome Node not found
+**Service connection issues**
 ```bash
-# Service check
-kubectl get svc chrome-node-service -n test-automation
-
-# Endpoints check
 kubectl get endpoints chrome-node-service -n test-automation
-
-# DNS test
-kubectl exec -it <controller-pod> -n test-automation -- nslookup chrome-node-service
+kubectl exec -it <pod> -n test-automation -- curl http://chrome-node-service:4444/wd/hub/status
 ```
 
-## Conclusion
+**Session tracking not working**
+```bash
+kubectl logs <chrome-node-pod> -n test-automation | grep -i session
+kubectl auth can-i get pods/log -n test-automation --as=system:serviceaccount:test-automation:test-controller-sa
+```
 
-This folder is specifically prepared for **DevOps/Kubernetes deployment**.
+## Architecture Benefits
+
+**Service-Based Approach:**
+- Kubernetes handles load balancing automatically (Round-Robin)
+- Uses stable DNS names instead of dynamic Pod IPs
+- Routes traffic only to healthy pods
+- No need for manual pod selection logic
+- Easy to scale without code changes
+
+**Session Tracking:**
+- Visibility into which pod executed each test
+- Easy identification of problematic pods
+- Verification that load balancing works correctly
+
+---
+
+This implementation uses service-based architecture for better load balancing and easier scalability.
